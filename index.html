@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#101b32">
+<title>跆拳道電子護胸計分板</title>
+<style>
+:root{font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;color:#17243b;background:#eef2f7}*{box-sizing:border-box}
+body{margin:0;padding:env(safe-area-inset-top) 14px env(safe-area-inset-bottom)}
+main{max-width:640px;margin:16px auto;background:white;border-radius:18px;padding:22px 16px 24px;box-shadow:0 5px 25px #1b2b4614}
+h1{font-size:clamp(23px,6vw,30px);margin:0 0 20px;text-align:center}
+button{font-family:inherit;touch-action:manipulation;cursor:pointer}button:disabled{opacity:.55;cursor:default}
+.connect{width:100%;background:#1565c0;border:0;border-radius:12px;color:white;font-size:18px;font-weight:700;padding:16px 10px;min-height:54px}
+.status{background:#f2f5f9;color:#44546b;border-radius:10px;padding:12px;margin-top:12px;text-align:center;line-height:1.5;overflow-wrap:anywhere}
+.status.ok{background:#e8f6ed;color:#17683d}.status.err{background:#fff0ef;color:#a22b23}
+.board{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:20px 0}
+.score{background:#f4f6fa;border-radius:12px;padding:16px 5px;text-align:center;min-width:0;border-top:7px solid #dc3545}
+.score.waist{border-color:#e5ab13}.label{font-size:16px;font-weight:600}.num{font-size:clamp(45px,15vw,72px);font-weight:800;line-height:1.4;font-variant-numeric:tabular-nums}.minor{font-size:14px;color:#637083}
+.total{padding:18px;background:#178449;color:white;text-align:center;border-radius:14px}
+.total .num{font-size:clamp(68px,22vw,104px);line-height:1.15}
+.actions{display:flex;justify-content:center;margin-top:18px}.reset{background:#5b6675;border:0;border-radius:10px;color:white;padding:13px 22px;font-size:16px;min-height:48px}
+.hint{font-size:13px;line-height:1.55;color:#58677d;margin:18px 3px 0;text-align:left}
+@media(max-width:360px){main{padding:18px 12px}.label{font-size:14px}.minor{font-size:12px}}
+</style>
+</head>
+<body>
+<main>
+<h1>🥋 跆拳道電子護胸計分板</h1>
+<button class="connect" id="connectBtn">連接電子護具藍牙</button>
+<div class="status" id="statusText" role="status" aria-live="polite">狀態：尚未連接</div>
+<div class="board">
+<section class="score"><div class="label">前胸得分（2分／次）</div><div class="num" id="chestScore">0</div><div class="minor">擊中次數：<span id="chestCount">0</span></div></section>
+<section class="score waist"><div class="label">腰部得分（2分／次）</div><div class="num" id="waistScore">0</div><div class="minor">擊中次數：<span id="waistCount">0</span></div></section>
+</div>
+<section class="total"><div>總得分</div><div class="num" id="totalScore">0</div></section>
+<div class="actions"><button class="reset" id="resetBtn">分數歸零重置</button></div>
+<p class="hint">iPhone 請在 Bluefy 瀏覽器內開啟本頁的 HTTPS 網址。連線後保持此頁在前景。Safari 不支援這份程式使用的 Web Bluetooth。此網頁沿用原 PC 版的裝置名稱、BLE UUID 和通知資料格式。</p>
+</main>
+<script>
+'use strict';
+const UUID_SERVICE='4fafc201-1fb5-459e-8fcc-c5c9c331914b';
+const UUID_CHAR='beb5483e-36e1-4688-b7f5-ea07361b26a8';
+const DEVICE_NAME='TKD_Electronic_Armor';
+let device=null, characteristic=null, chestCount=0, waistCount=0, connecting=false;
+const el=id=>document.getElementById(id);
+const connectBtn=el('connectBtn');
+function status(message,kind=''){let node=el('statusText');node.textContent=message;node.className='status '+kind;}
+function display(){el('chestCount').textContent=chestCount;el('waistCount').textContent=waistCount;el('chestScore').textContent=chestCount*2;el('waistScore').textContent=waistCount*2;el('totalScore').textContent=(chestCount+waistCount)*2;}
+function onData(event){const value=event.target.value;const message=new TextDecoder('utf-8').decode(value).trim();if(message.includes('CHEST'))chestCount++;else if(message.includes('WAIST'))waistCount++;else return;display();}
+function onDisconnect(){status('狀態：護具藍牙已斷線，請重新連接','err');connectBtn.textContent='重新連接電子護具';connectBtn.disabled=false;characteristic=null;}
+connectBtn.addEventListener('click',async()=>{
+if(connecting)return;
+if(!navigator.bluetooth||typeof navigator.bluetooth.requestDevice!=='function'){
+ status('這個瀏覽器不支援 Web Bluetooth。iPhone 請改用 Bluefy 開啟 HTTPS 網址。','err');return;
+}
+if(!window.isSecureContext){status('此頁目前不是安全連線，請透過 HTTPS 網址開啟。','err');return;}
+connecting=true;connectBtn.disabled=true;
+try{
+ status('正在搜尋 BLE 電子護具…');
+ device=await navigator.bluetooth.requestDevice({filters:[{name:DEVICE_NAME}],optionalServices:[UUID_SERVICE]});
+ device.addEventListener('gattserverdisconnected',onDisconnect);
+ status('已找到護具，正在連接…');
+ const server=await device.gatt.connect();
+ const service=await server.getPrimaryService(UUID_SERVICE);
+ characteristic=await service.getCharacteristic(UUID_CHAR);
+ characteristic.addEventListener('characteristicvaluechanged',onData);
+ await characteristic.startNotifications();
+ status('狀態：已連接，正在接收踢擊訊號','ok');
+ connectBtn.textContent='已連線';
+}catch(error){status('連接失敗：'+(error?.message||String(error)),'err');connectBtn.textContent='重新連接電子護具';}
+finally{connecting=false;connectBtn.disabled=!!device?.gatt?.connected;}
+});
+el('resetBtn').addEventListener('click',()=>{if(confirm('確定將前胸、腰部及總得分歸零？')){chestCount=0;waistCount=0;display();}});
+display();
+</script>
+</body>
+</html>
